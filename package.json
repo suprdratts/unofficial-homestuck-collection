@@ -16,7 +16,7 @@
     "node": "18.20"
   },
   "version": "2.7.2",
-  "license": "GPL-3.0*",
+  "license": "GPL-3.0",
   "repository": "github:GiovanH/unofficial-homestuck-collection",
   "private": true,
   "scripts": {

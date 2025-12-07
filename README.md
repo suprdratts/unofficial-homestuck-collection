@@ -1,21 +1,14 @@
-![The Unofficial Homestuck Collection](src/assets/collection_logo.png)
+## The Unofficial Homestuck Collection
 
 Homepage: <https://homestuck.giovanh.com/unofficial-homestuck-collection/>
 
----
+The *Unofficial Homestuck Collection* is a fan-created Browser for reading the webcomic *Homestuck* and other works by Andrew Hussie as they were originally intended to be experienced with Flash integration along with a number of other features. The unofficial Homestuck collection must be paired with an external "Asset Pack" to function that can be downloaded [here](https://cdn.beyondcanon.com/uhc/assets.zip).
 
-The future of The Unofficial Homestuck Collection is currently uncertain. 
+This repository is a fork of the original [Unofficial Homestuck Collection](https://github.com/GiovanH/unofficial-homestuck-collection) that is maintained and operated by *Homestuck, Inc.* to ensure its preservation and continued availability while a new "Official" Homestuck Collection is in development. Any future 'official' support or updates to the UHC will be made here.
 
-The surrounding websites have been taken down by legal action initiated by Homestuck, Inc. and The Homestuck Independent Creative Union as part of an attempted hostile takeover. [More details here.](https://blog.giovanh.com/blog/2025/08/08/uhc-end/)
+## About the Codebase
 
-There have currently been no legal attacks on this, the codebase for the reader. 
-The question of whether this repository can remain up or maintained without the threat of retaliatory legal action is under active investigation. 
-
----
-
-This is the repository for a self-contained collection that contains Homestuck (with Flash elements fully intact), the other MS Paint Adventures, official Homestuck side-stories, and a variety of goodies for the enquiring reader, as well as a variety of unintrusive enhancements to the overall presentation, both for quality and convenience.
-
-To run The Unofficial Homestuck Collection, you need to pair this application with a pack of assets designed specifically to integrate with it. A decent amount of effort has been made to keep this repository free from the majority of that copyrighted content, and (at least for now), it won't contain a link to the place you can find it.
+The Unofficial Homestuck Collection is an open source project built using Electron and Vue under the [GNU General Public License](https://www.gnu.org/licenses). You are free to fork and modify the code, as well as suggest changes to be made to it here. 
 
 ## Some details on the codebase
 
@@ -27,7 +20,13 @@ Building a development version of TUHC requires NPM (Node 14.18), Yarn, `make`, 
 
 - NPM is the node package manager, used for developing with Node.js.
 - [Yarn](https://www.npmjs.com/package/yarn) is a npm-like package manager that is itself distributed as an NPM package.
-- `tar` and `make` are basic GNU utilities used extremely commonly in software development. `tar` is used to pack files (like zip) and `make` is used to build projects with dependencies. If you don't already have them on your system (you can maintain robust CLI environments using tools like [cygwin](https://www.cygwin.com) or [WSL](https://docs.microsoft.com/en-us/windows/wsl/install)), you can download [`tar`](http://gnuwin32.sourceforge.net/packages/gtar.htm) and [`make`](https://www.gnu.org/software/make/) individually directly from GNU.
+- [`tar`](http://gnuwin32.sourceforge.net/packages/gtar.htm) and [`make`](https://www.gnu.org/software/make/) are basic GNU utilities used extremely commonly in software development. `tar` is used to pack files (like zip) and `make` is used to build projects with dependencies. If you don't already have them on your system (you can maintain robust CLI environments using tools like [cygwin](https://www.cygwin.com) or [WSL](https://docs.microsoft.com/en-us/windows/wsl/install)), you can download [`tar`](http://gnuwin32.sourceforge.net/packages/gtar.htm) and [`make`](https://www.gnu.org/software/make/) individually directly from GNU.
+  
+### Compiles and hot-reloads for development
+
+```
+make test
+```
 
 ## Credits
 
@@ -44,12 +43,21 @@ This program is free software: you can redistribute it and/or modify
 it under the terms of the <a href="https://www.gnu.org/licenses">GNU General Public License</a> as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
-</pre>
 
-As per section 7, an additional requirement of this license is that all attribution and crediting must be preserved. Modifications that remove
-attribution or otherwise misrepresent the authorship or origin of material
-are not permitted and violate the license conditions. 
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; 
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  
+See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program.  
+If not, see https://www.gnu.org/licenses/.
+
+Portions of this program may contain material subject to copyright and not subject to the 
+GNU General Public License, including the copyrights associated with the properties owned 
+and distributed by Homestuck, Inc. and Andrew Hussie.
+</pre>
 
 ---
 
-In (non legally-binding) summary, you may freely use and distribute the software, as well as modify it and distribute your changes and modified versions, so long as you do not restrict the rights of others to do the same. You must clearly notate any changes and provide links to the unmodified original, and not remove credits.
+In (non legally-binding) summary, you may freely use and distribute the software, as well as modify it and distribute your changes and modified versions, so long as you do not restrict the rights of others to do the same. You must clearly notate any changes and provide links to the unmodified original, and not remove credits (which are part of the original copyright). The Homestuck webcomic and associated copyrights are not subject to the rights granted under this license, and may be subject to takedown, enforcement, or modification by Homestuck, Inc.
+
+As per section 7, the author attributions in Credits.vue must be preserved in all covered works. Modified versions may optionally extend this list as applicable, but modifications that remove attributions or otherwise misrepresent the origin of the material are not permitted.
