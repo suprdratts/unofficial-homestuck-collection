@@ -2,7 +2,7 @@ default:
     just --list
 
 # construct 'future' git branch from stack
-git-future:
+git-future *args:
     #!/bin/bash
     set -eu -o pipefail
 
@@ -10,21 +10,25 @@ git-future:
 
     git reset --hard develop
 
-    for branch in $@; do
-        git merge $branch
-        git commit || :
+    for branch in {{args}}; do
+      git merge $branch
+      git commit || :
     done
 
 xml_release:
     #!/bin/bash
-    gh release view --json tagName,publishedAt,url,body \
-      | yq -p json -o xml '
-        {"release": {
+    latest_incl_pre="$(gh release list --json tagName | jq -r '.[0].tagName' | dos2unix)"
+    release="$(gh release view $latest_incl_pre --json tagName,publishedAt,url,body)"
+    export body="$(echo "$release" | yq -p json '.body' | /usr/bin/env python3 -m markdown)"
+
+    echo "$release" | yq -p json -o xml '. | {
+        "release": {
           "+@version": (.tagName | sub("v", "")),
           "+@type": "stable",
           "+@date": (.publishedAt),
           "url": .url,
-          "description": "<p>" + .body + "</p>"}
+          "description": strenv(body) | sub("\n", "")
+        }
       }'
 
 flatpak:

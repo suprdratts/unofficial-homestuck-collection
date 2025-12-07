@@ -1,46 +1,58 @@
 <template>
-  <GenericPage>
-    <div class="pageContent">
-      <Media url="images/logo.gif" class="logo"/>
-      <div v-if="routeParams.mode == 'artcredits'" class="credits artCredits" >
-        <div class="center">
-          <h2>ART CREDITS</h2>
+  <GenericPage v-if="routeParams.mode == 'artcredits'">
+    <Media url="images/logo.gif" class="logo"/>
+    <div class="artCredits" >
+      <div class="centeredProse prose">
+        <h2>ART CREDITS</h2>
 
-          After the first year of <a href="/mspa/6">Homestuck</a>, starting with <a href="/mspa/003701">this page</a>, MSPA began including contributions from other artists into the animations. The artists are credited here.
+        After the first year of <a href="/mspa/6">Homestuck</a>, starting with <a href="/mspa/003701">this page</a>, MSPA began including contributions from other artists into the animations. The artists are credited here.
 
-          <br><br>
-          -------------------------------------------------------
-          <br><br>
+        <br><br>
+        -------------------------------------------------------
+        <br><br>
 
-          <template v-for="(credit, ci) in artCredits">
-            <div class="artCredit" :key="ci" v-if="!credit.pages.some(p => $pageIsSpoiler(p))">
-              <template v-for="(page, pi) in credit.pages" >
-                <span v-if="page === '-'" :key="`${pi}a`"> through </span>
-                <template v-else>
-                  <StoryPageLink
-                    :mspaId='page' credit
-                    class="artCreditLink"
-                    :key="`${pi}b`">
-                  </StoryPageLink>
-                </template>
-
+        <template v-for="(credit, ci) in artCredits">
+          <div class="artCredit" :key="ci" v-if="!credit.pages.some(p => $pageIsSpoiler(p))">
+            <template v-for="(page, pi) in credit.pages" >
+              <span v-if="page === '-'" :key="`${pi}a`"> through </span>
+              <template v-else>
+                <StoryPageLink
+                  :mspaId='page' credit
+                  class="artCreditLink"
+                  :key="`${pi}b`">
+                </StoryPageLink>
               </template>
-              <span v-html="credit.desc"></span>
-            </div>
-          </template>
 
-          <div class="artCredit" v-if="$pageIsSpoiler('010027')">
-            Keep reading to unlock!
+            </template>
+            <span v-html="credit.desc"></span>
           </div>
+        </template>
+
+        <div class="artCredit" v-if="$pageIsSpoiler('010027')">
+          Keep reading to unlock!
         </div>
       </div>
-      <div v-else class="credits noCredits">
+    </div>
+  </GenericPage>
+  <GenericCardPage v-else>
+    <div class="card">
+      <div class="creditDisambig">
         <div class="creditLinks">
           <div class="credit"><a href="/music/features"><Media url="/archive/collection/credits_sound.png" /><br>SOUND CREDITS</a></div>
           <div class="credit"><a href="/credits/artcredits"><Media url="/archive/collection/credits_art.png" /><br>ART CREDITS</a></div>
         </div>
-
-        <div class="archiveCredits">
+      </div>
+    </div>
+        
+    <div class="card">
+      <div class="cardContent">
+        <div class="archiveCredits cardBody">
+          <div class="title center">
+            <h1>The Unofficial Homestuck Collection</h1>
+            <p>
+              by Bambosh and GiovanH
+            </p>
+          </div>
           <h2>Archive credits:</h2>
           <dl>
             <template v-for="(credit, ci) in archiveCredits">
@@ -51,40 +63,50 @@
               <dd v-html="credit.desc" :key="`${ci}b`"></dd>
             </template>
           </dl>
+          <h3>Additional thanks</h3>
+          <ul class="thanks">
+            <li>
+              <a href="https://fontstruct.com/fontstructors/1639437/ducdat0507">ducdat0507</a> for 
+              <a href="https://fontstruct.com/fontstructions/show/1880599/courierstuck">Courierstuck</a>
+            </li>
+            <li>
+              <a href="https://github.com/benwiley4000">Ben Wiley</a> for 
+              <a href="https://github.com/benwiley4000/gif-frames">gif-frames</a>
+            </li>
+          </ul>
           <hr />
-          <div class="legal">
-            Legal:
-<pre>The Unofficial Homestuck Collection
-Copyright (C) 2020-2021 Bambosh, (C) 2021-2023 Bambosh and GiovanH, (C) 2024- GiovanH
+          <h3>Legal</h3>
+          <div class="legal prose">
+  <pre>The Unofficial Homestuck Collection
+  Copyright (C) 2025 GiovanH
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the <a href="https://www.gnu.org/licenses">GNU General Public License</a> as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-</pre>
-            <p>
-              In (non legally-binding) summary, you may freely use and distribute the software, as well as modify it and distribute your changes and modified versions, so long as you do not restrict the rights of others to do the same. You must clearly notate any changes and provide links to the unmodified original, and not remove credits (which are part of the original copyright.)
-            </p>
-            <br />
-            <p>
-              As per section 7, the author attributions above must
-              be preserved in all covered works. Modified versions may optionally
-              extend this list as applicable, but modifications that remove
-              attributions or otherwise misrepresent the origin of the material
-              are not permitted.
-            </p>
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the <a href="https://www.gnu.org/licenses">GNU General Public License</a> as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  As per section 7, an additional requirement of this license is that all 
+  attribution and crediting must be preserved. Modifications that remove 
+  attribution or otherwise misrepresent the authorship or origin of material 
+  are not permitted and violate the license conditions.
+  </pre>
+            <hr />
+            <!-- <p> -->
+              In (non legally-binding) summary, you may freely use and distribute the software, as well as modify it and distribute your changes and modified versions, so long as you do not restrict the rights of others to do the same. You must clearly notate any changes and provide links to the unmodified original, and not remove credits.
+            <!-- </p> -->
           </div>
         </div>
       </div>
     </div>
-  </GenericPage>
+  </GenericCardPage>
 </template>
 
 <script>
 // @ is an alias to /src
 import Media from '@/components/UIElements/MediaEmbed.vue'
-import GenericPage from '@/components/UIElements/GenericPage.vue'
+import GenericPage from '@/components/Template/GenericPage.vue'
 import StoryPageLink from '@/components/UIElements/StoryPageLink.vue'
+import GenericCardPage from '@/components/Template/GenericCardPage.vue'
 
 export default {
   name: 'credits',
@@ -92,7 +114,7 @@ export default {
     'tab', 'routeParams'
   ],
   components: {
-    Media, GenericPage, StoryPageLink
+    Media, GenericPage, GenericCardPage, StoryPageLink
   },
   title(ctx) {
     return ctx.routeParams.mode == 'artcredits' ? "Art Credits" : "Credits"
@@ -108,10 +130,11 @@ export default {
         {
           name: "GiovanH",
           link: "https://im.giovanh.com/?ref=uhc",
-          desc: `After the release of v1.0, Gio stepped forward with an offer to help design some new features - and ended up becoming the single most important contributor to this project. It isn't hyperbolic to say the collection would not exist as it does today without the unfathomable quantity of passion he has poured into it since.`
+          desc: `After the release of v1.0, Gio stepped forward with an offer to help design some new features - and ended up becoming the single most important contributor to this project. It isn't hyperbolic to say the collection would not exist as it does today without the unfathomable quantity of passion he has poured into it since. He currently maintains this project.`
         },
         {
           name: "Niklink",
+          link: "https://github.com/Niklink",
           desc: `Helped write a bunch of text, and put together a bunch of the thumbnails that ended up being used for notifications and flash pages. Also helped source some obscure material and test changes during development.`
         },
         {
@@ -130,8 +153,8 @@ export default {
           desc: "For creating the fantastic new animated logo."
         },
         {
-          name: "sassacre",
-          link: "https://sassac.re/",
+          name: "sunsprite",
+          link: "https://sunsprite.art/",
           desc: "For ironing out some difficult issues related to macOS."
         },
         {
@@ -157,7 +180,7 @@ export default {
         {
           name: "Makin",
           link: "https://homestuck.net/",
-          desc: `Whose CSS I blatantly stole for <a href="/tso/aids">And It Don't Stop</a>, as well as some backgrounds for <a href="/snaps">the Snapchat updates</a>. Has also directly contributed some code for fullscreen mode!`
+          desc: `CSS for <a href="/tso/aids">And It Don't Stop</a>, as well as some backgrounds for <a href="/snaps">the Snapchat updates</a> and additional archival materials. Has also directly contributed some code for fullscreen mode!`
         },
         {
           name: "Anthony Bailey",
@@ -165,12 +188,17 @@ export default {
           desc: `For making the original offline Homestuck archive that sent me off down this rabbit hole to begin with!`
         },
         {
-          name: "ducdat0507",
-          link: "https://fontstruct.com/fontstructors/1639437/ducdat0507",
-          desc: `For the prerendered aliased Courier bitmap font.`
+          name: "Leo60228",
+          link: "https://vriska.dev",
+          desc: "For correcting some technical issues and keeping data up-to-date. Thanks also for your work on the hsmusic wiki!"
         },
         {
-          name: "Each of our GitHub contributors",
+          name: "Grafcube",
+          link: "https://sakurajima.social/@grafcube",
+          desc: "For leading the initial effort to produce a Flatpak build for linux users"
+        },
+        {
+          name: "Our other GitHub contributors",
           link: "https://github.com/GiovanH/unofficial-homestuck-collection/graphs/contributors",
           desc: "Every single change you guys make leaves a lasting impact on this project. We wouldn't be here without you!"
         }
@@ -315,6 +343,49 @@ export default {
     opacity: 0.6; // Not obfuscation, just coloring >.>
   }
 }
+
+ul.thanks {
+  margin-bottom: 1em;
+  padding-left: 3em;
+}
+
+.prose {
+  font-family: Verdana, Geneva, Tahoma, sans-serif;
+  font-weight: normal;
+  font-size: 12px;
+}
+.centeredProse {
+  width: 480px;
+  text-align: center;
+  margin: 0 auto;
+  // font-family: Verdana, Geneva, Tahoma, sans-serif;
+  // font-weight: normal;
+  // font-size: 12px;
+}
+.creditDisambig {
+  padding: 25px 0;
+  .creditLinks {
+    display: flex;
+    flex-flow: row wrap;
+    justify-content: space-around;
+    margin: 0 auto;
+    width: 600px;
+    
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: bold;
+    font-size: 20px;
+
+    .credit {
+      margin-bottom: 20px;
+      text-align: center;
+      line-height: 1.1;
+
+      img{
+        display: block;
+      }
+    }
+  }
+}
 .artCredits {
   width: 650px;
 
@@ -323,14 +394,6 @@ export default {
     font-family: courier, monospace;
     font-size: 32px;
   }
-  .center {
-    width: 480px;
-    text-align: center;
-    margin: 0 auto;
-    font-family: Verdana, Geneva, Tahoma, sans-serif;
-    font-weight: normal;
-    font-size: 12px;
-  }
   .artCreditLink {
     display: block;
   }
@@ -338,30 +401,15 @@ export default {
     margin-bottom: 2em;
   }
 }
-.noCredits {
-  width: 650px;
-  .creditLinks {
-    display: flex;
-    flex-flow: row wrap;
-    justify-content: space-around;
-    margin: 0 auto;
-    width: 600px;
-
-    .credit {
-      margin-bottom: 20px;
-      text-align: center;
-      line-height: 1.1;
-      font-size: 18px;
-
-      img{
-        display: block;
-      }
-    }
+.archiveCredits {
+  dt {
+    font-weight: normal;
   }
-  .archiveCredits {
+    
+  .title {
     width: 600px;
     margin: 0 auto;
-    padding-bottom: 2em;
+    padding-bottom: 1em;
     h2 {
      text-align: center;
     }
@@ -373,4 +421,3 @@ export default {
   }
 }
 </style>
-

@@ -1,34 +1,40 @@
 'use strict'
 
-import { app, BrowserWindow, ipcMain, Menu, protocol, dialog, shell, clipboard } from 'electron'
-import { createProtocol } from 'vue-cli-plugin-electron-builder/lib'
-import installExtension, { VUEJS_DEVTOOLS } from 'electron-devtools-assembler'
 import fs from 'fs'
-
-import Resources from "./resources.js"
-
-const { nativeImage } = require('electron');
-const APP_VERSION = app.getVersion()
-const path = require('path')
-const isDevelopment = process.env.NODE_ENV !== 'production'
+import {
+  app, ipcMain, protocol, dialog, shell, clipboard,
+  BrowserWindow, Menu
+} from 'electron'
+import { createProtocol } from 'vue-cli-plugin-electron-builder/lib'
+import errorReporting from './js/errorReporting'
+import installExtension, { VUEJS_DEVTOOLS } from 'electron-devtools-assembler'
 
 const handler = require('serve-handler')
 const http = require('http')
+const path = require('path')
+const semver = require("semver")
 
+const { nativeImage } = require('electron')
+const gifFrames = require('gif-frames')
+const log = require('electron-log')
 const Store = require('electron-store')
-const store = new Store()
-
 const windowStateKeeper = require('electron-window-state')
 
-const log = require('electron-log')
+const store = new Store()
 const logger = log.scope('ElectronMain')
 
-// const search = require('./search.js').default
+const APP_VERSION = app.getVersion()
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let win = null
 const gotTheLock = app.requestSingleInstanceLock()
+
+const isDevelopment = process.env.NODE_ENV !== 'production'
+
+if (!isDevelopment) {
+  errorReporting.registerMainLogger(log)
+}
 
 // Improve overall performance by disabling GPU acceleration
 // We're not running crysis or anything its all gifs
@@ -40,13 +46,14 @@ if (!store.get('settings.enableHardwareAcceleration')) {
   logger.info("Not disabling hardware acceleration")
 }
 
-// Log settings, for debugging
-logger.info(store.get('settings'))
+if (process.platform == 'linux')
+  app.commandLine.appendSwitch('no-sandbox')
 
 // Scheme must be registered before the app is ready
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true } },
-  { scheme: 'assets', 
+  {
+    scheme: 'assets',
     privileges: { 
       standard: true,
       secure: true,
@@ -59,12 +66,12 @@ protocol.registerSchemesAsPrivileged([
 // zoom functions
 function zoomIn() {
   if (win) {
-    win.webContents.send('ZOOM_IN');
+    win.webContents.send('ZOOM_IN')
   }
 }
 function zoomOut() {
   if (win) {
-    win.webContents.send('ZOOM_OUT');
+    win.webContents.send('ZOOM_OUT')
   }
 }
 
@@ -141,7 +148,12 @@ var menuTemplate = [
       {
         label: 'New Tab',
         accelerator: 'CmdOrCtrl+T',
-        click: () => {if (win) win.webContents.send('TABS_NEW', {parsedURL: '/', adjacent: false})}
+        click: () => {
+          if (win) win.webContents.send(
+            'TABS_NEW',
+            {url: '/', adjacent: false}
+          )
+        }
       },
       {
         label: 'Close Tab',
@@ -233,15 +245,10 @@ async function loadArchiveData(){
     }
   } catch (e) {
     // Error loading json. Probably a bad asset pack installation.
-    logger.error(e)
-    return undefined
+    throw e
   }
 
   if (!data) throw new Error("Data empty after attempted load")
-
-  data.tweaks.tzPasswordPages = Object.values(data.mspa.story)
-    .filter(v => v.flag.includes('TZPASSWORD'))
-    .map(v => v.pageId)
 
   try {
     // Sanity checks
@@ -249,12 +256,18 @@ async function loadArchiveData(){
     required_keys.forEach(key => {
       if (!data[key]) throw new Error("Archive object missing required key", key)
     })
+    // This is an identifier for the real asset pack V2 but there are
+    // circulating distributions without it...
+    // fs.lstatSync(path.join(assetDir, "SELECT THIS FOLDER IN THE APP"))
+    fs.lstatSync(path.join(assetDir, "storyfiles/hs2/00001.gif"))
+    fs.accessSync(path.join(assetDir, "archive"))
+
   } catch (e) {
-    dialog.showMessageBoxSync({
-      type: 'error',
-      title: 'Archive load error',
-      message: `Something went wrong while loading the archive. This may be related to an incorrectly-written mod. Check the console log for details.`
-    })
+    // dialog.showMessageBoxSync({
+    //   type: 'error',
+    //   title: 'Archive load error',
+    //   message: `Something went wrong while loading the archive. This may be related to an incorrectly-written mod. Check the console log for details.`
+    // })
 
     throw e
   }
@@ -279,8 +292,13 @@ function getFlashPath(){
       flashPlugin = 'archive/data/plugins/libpepflashplayer.so'
       break
     default:
-      throw Error("Unknown platform", process.platform)
+      throw Error("Unknown platform", process.platform, process.arch)
   }
+
+  if (assetDir === undefined) {
+    throw Error("Asset directory not yet defined")
+  }
+
   let flashPath = path.join(assetDir, flashPlugin)
 
   if (process.platform == "win32" && !fs.existsSync(flashPath)) {
@@ -291,37 +309,53 @@ function getFlashPath(){
   return flashPath
 }
 
-try {
-  // Pick the appropriate flash plugin for the user's platform
-  const flashPath = getFlashPath()
+var is_first_run = false
+if (assetDir === undefined) {
+  is_first_run = true
+} else {
+  try {
+    if (store.has('settings.ruffleFallback') && store.get('settings.ruffleFallback') === true) {
+      logger.info("Ruffle fallback enabled, disabling ppapi-level flash player")
+    } else {
+      // Pick the appropriate flash plugin for the user's platform
+      const flashPath = getFlashPath()
 
-  if (fs.existsSync(flashPath)) {
-    app.commandLine.appendSwitch('ppapi-flash-path', flashPath)
-    if (process.platform == 'linux') app.commandLine.appendSwitch('no-sandbox')
-    if (store.has('settings.smoothScrolling') && !store.get('settings.smoothScrolling')) app.commandLine.appendSwitch('disable-smooth-scrolling')
-  } else throw Error(`Flash plugin not located at ${flashPath}`)
-  
-  // Spin up a static file server to grab assets from. Mounts on a dynamically assigned port, which is returned here as a callback.
-  const server = http.createServer((request, response) => {
-    response.setHeader('Access-Control-Allow-Origin', '*'); /* @dev First, read about security */
-    response.setHeader('Access-Control-Allow-Methods', 'OPTIONS, GET');
-    response.setHeader('Access-Control-Max-Age', 2592000); // 30 days
-    return handler(request, response, {
-      public: assetDir
-    })
-  })
+      if (fs.existsSync(flashPath)) {
+        app.commandLine.appendSwitch('ppapi-flash-path', flashPath)
+      } else throw Error(`Flash plugin not located at ${flashPath}`)
+    }
 
-  server.listen(0, '127.0.0.1', (error) => {
-    if (error) throw error
-    port = server.address().port
-  
-    // Initialize Resources
-    Resources.init({
-      assets_root: `http://127.0.0.1:${port}/`
+    if (store.has('settings.smoothScrolling') && store.get('settings.smoothScrolling') === false)
+      app.commandLine.appendSwitch('disable-smooth-scrolling')
+
+    // Spin up a static file server to grab assets from.
+    // Mounts on a dynamically assigned port, which is returned here as a callback.
+    const server = http.createServer((request, response) => {
+      response.setHeader('Access-Control-Allow-Origin', '*')
+      response.setHeader('Access-Control-Allow-Methods', 'OPTIONS, GET')
+      response.setHeader('Access-Control-Max-Age', 2592000)
+      return handler(request, response, {
+        public: assetDir
+      })
     })
-  })
-} catch (error) {
-  logger.debug(error)
+
+    server.listen(0, '127.0.0.1', (error) => {
+      if (error) throw error
+      port = server.address().port
+
+      if (port === undefined) {
+        throw Error("Could not initialize internal asset server", server, server.address())
+      } else {
+        logger.info("Successfully started server", `http://127.0.0.1:${port}/`)
+      }
+    })
+  } catch (error) {
+    logger.debug(error)
+    is_first_run = true
+  }
+}
+
+if (is_first_run) {
   logger.warn("Loading check failed, loading setup mode")
 
   // If anything fails to load, the application will start in setup mode. This will always happen on first boot! It also covers situations where the assets failed to load.
@@ -365,13 +399,17 @@ try {
       ]
     }
   ]
-} finally {
-  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
 }
+
+Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
 
 // The renderer process requests the chosen port on startup, which we're happy to oblige
 ipcMain.on('STARTUP_GET_INFO', (event) => {
-  event.returnValue = {port: port, appVersion: APP_VERSION}
+  event.returnValue = {
+    port: port,
+    userData: app.getPath('userData'),
+    appVersion: APP_VERSION
+  }
 })
 
 ipcMain.handle('check-archive-version', async (event, payload) => {
@@ -394,11 +432,10 @@ if (assetDir && fs.existsSync(assetDir)) {
   var last_app_version = store.has("appVersion") ? store.get("appVersion") : '1.0.0'
   if (app.commandLine.hasSwitch('reset-last-version')) {
     logger.warn(`Run with --reset-last-version flag, resetting version from ${last_app_version} to 0.0.0.`)
-    last_app_version = '0.0.0';
+    last_app_version = '0.0.0'
   }
 
-  const semverGreater = (a, b) => a.localeCompare(b, undefined, { numeric: true }) === 1
-  if (!last_app_version || semverGreater(APP_VERSION, last_app_version)) {
+  if (!last_app_version || semver.gt(APP_VERSION, last_app_version)) {
     logger.warn(`App updated from ${last_app_version} to ${APP_VERSION}`)
     want_imods_extracted = true // Takes effect when client requests archive
   } else {
@@ -413,13 +450,18 @@ if (assetDir && fs.existsSync(assetDir)) {
 // Speed hack, try to preload the first copy of the archive
 var first_archive
 var archive // Also, keep a reference to the latest archive, for lazy eval
-try {
-  loadArchiveData().then(result => {
-    archive = first_archive = result
-  })
-} catch (e) {
-  // logger.warn(e)
-  // don't even warn, honestly
+
+if (assetDir != undefined) {
+  try {
+    loadArchiveData().then(result => {
+      archive = first_archive = result
+    }).catch(error => {
+      logger.debug(error, "(first load or missing asset pack?)")
+    })
+  } catch (e) {
+    // logger.warn(e)
+    // don't even warn, honestly
+  }
 }
 
 ipcMain.on('RELOAD_ARCHIVE_DATA', async (event) => {
@@ -428,7 +470,7 @@ ipcMain.on('RELOAD_ARCHIVE_DATA', async (event) => {
     if (first_archive) {
       // Use the preloaded "first archive"
       archive = first_archive
-      first_archive = undefined;
+      first_archive = undefined
     } else {
       // Reload the archive data
       archive = await loadArchiveData()
@@ -439,14 +481,19 @@ ipcMain.on('RELOAD_ARCHIVE_DATA', async (event) => {
     if (want_imods_extracted) {
       logger.info("mods: before loading, please extract imods")
       win.webContents.send('MODS_EXTRACT_IMODS_PLEASE')
+      want_imods_extracted = false
     }
 
     win.webContents.send('ARCHIVE_UPDATE', archive)
   } catch (e) {
     logger.error("Error reloading archive", e)
     win.webContents.send('SET_LOAD_STATE', "ERROR")
+    const e_obj = {
+      stack: e.stack,
+      ...e
+    }
+    win.webContents.send('SET_LOAD_ERROR', JSON.stringify(e_obj))
   }
-  win.webContents.send('SET_LOAD_STATE', "DONE")
 })
 
 // search.registerIpc(ipcMain)
@@ -471,7 +518,8 @@ ipcMain.handle('win-close', async (event) => {
 ipcMain.on('win-close-sync', (e) => {
   logger.warn("Got synchronous close event!")
   win.destroy()
-  e.returnValue = true;
+  e.returnValue = true
+  process.exit()
 })
 
 ipcMain.handle('save-file', async (event, payload) => {
@@ -501,12 +549,28 @@ ipcMain.handle('locate-assets', async (event, payload) => {
       logger.info("New asset directory", assetDir)
       await loadArchiveData() // Run to check if this thows an error
 
-      let flashPath = getFlashPath()
+      const flashPath = getFlashPath()
       // logger.info(assetDir, flashPlugin, flashPath)
       if (!fs.existsSync(flashPath)) throw Error(`Flash plugin not found at '${flashPath}'`)
     } catch (error) {
-      logger.error(error)
-      validated = false
+      logger.debug(error)
+
+      if (error.code === 'EPERM') {
+        dialog.showMessageBoxSync(win, {
+          type: 'warning',
+          title: 'Bad asset location',
+          message: "You don't have permissions to read and write from the asset pack. The collection needs to be able to read and edit files in this directory. Please move the asset pack to another directory, or change the permissions."
+        })
+        return undefined
+      } else {
+        dialog.showMessageBoxSync(win, {
+          type: 'warning',
+          title: 'Assets not found',
+          message: "That doesn't look like the right folder. Make sure you unzipped the asset pack, and select the singular folder that contains everything else."
+        })
+      }
+
+      return undefined
     }
 
     if (validated) {
@@ -532,31 +596,67 @@ ipcMain.handle('locate-assets', async (event, payload) => {
         }
       } else return newPath[0]
     } else {
-      dialog.showMessageBoxSync(win, {
-        type: 'warning',
-        title: 'Assets not found',
-        message: "That doesn't look like the right folder. Make sure you unzipped the asset pack, and select the singular folder that contains everything else."
-      })
       return undefined
     }
   }
 })
 
+ipcMain.handle('pick-file', async (event, payload) => {
+  const newPath = dialog.showOpenDialogSync(win, {
+    defaultPath: '',
+    properties: [
+      'openFile'
+    ]
+  })
+  return newPath
+})
+
+ipcMain.handle('pick-new-file', async (event, payload) => {
+  const newPath = dialog.showOpenDialogSync(win, {
+    defaultPath: '',
+    properties: [
+      'promptToCreate'
+    ]
+  })
+  return newPath
+})
+ 
+ipcMain.handle('pick-directory', async (event, payload) => {
+  const newPath = dialog.showOpenDialogSync(win, {
+    defaultPath: '',
+    properties: [
+      'openDirectory'
+    ]
+  })
+  return newPath
+})
+
 ipcMain.handle('restart', async (event) => {
-  (!isDevelopment) && app.relaunch() // Can't relaunch app and maintain debugger connection
+  // Can't relaunch app and maintain debugger connection
+  if (isDevelopment) {
+    logger.info("Got relaunch request, but refusing to relaunch app in development environment")
+  } else {
+    app.relaunch() 
+  }
   app.exit()
 })
 
 ipcMain.handle('reload', async (event) => {
   win.reload()
+  if (process.env.WEBPACK_DEV_SERVER_URL) {
+    await win.loadURL(process.env.WEBPACK_DEV_SERVER_URL)
+  } else {
+    await win.loadURL('app://./index.html')
+  }
 })
 
 ipcMain.handle('prompt-okay-cancel', async (event, args) => {
   const title = args.title || "Notice"
   const ok_string = args.okay || "OK"
   const cancel_string = args.cancel || "Cancel"
+  const type = args.type || 'warning'
   const answer = dialog.showMessageBoxSync(win, {
-    type: 'warning',
+    type,
     buttons: [
       ok_string,
       cancel_string
@@ -564,7 +664,8 @@ ipcMain.handle('prompt-okay-cancel', async (event, args) => {
     cancelId: 1,
     defaultId: 1,
     title,
-    message: args.message
+    message: args.message,
+    detail: args.detail
   })
   return (answer === 0)
 })
@@ -580,44 +681,54 @@ ipcMain.handle('steam-open', async (event, browserUrl) => {
 })
 
 // Hook onto image drag events to allow images to be dragged into other programs
-try {
-  const Sharp = require('sharp')
-  ipcMain.on('ondragstart', (event, filePath) => {
-    // logger.info("Dragging file", filePath)
-    const cb = (icon) => event.sender.startDrag({ file: filePath, icon })
-    try {
-      // // We can use nativeimages for pngs, but sharp ones are scaled nicer.
-      // const nativeIconFromPath = nativeImage.createFromPath(filePath)
-      // if (!nativeIconFromPath.isEmpty()) {
-      //   logger.info("Native icon from path", nativeIconFromPath)
-      //   cb(nativeIconFromPath)
-      // } else {
-        Sharp(filePath).resize(150, 150, {fit: 'inside', withoutEnlargement: true})
-        .png().toBuffer().then(buffer => {
-          const sharpNativeImage = nativeImage.createFromBuffer(buffer)
-          // logger.info("Sharp buffer ok", !sharpNativeImage.isEmpty())
-          cb(sharpNativeImage)
-        }).catch(err => {throw err;})
-      // }
-    } catch (err) {
-      logger.error("Couldn't process image", err)
-      // eslint-disable-next-line no-undef
-      cb(`${__static}/img/dragSmall.png`)
-    }
-  })
+// and, more importantly, previewed by the OS
 
-  ipcMain.handle('copy-image', async (event, payload) => {
-    // logger.info(payload.url)
-    Sharp(payload.url).png().toBuffer().then(buffer => {
-      // logger.info(buffer)
-      const sharpNativeImage = nativeImage.createFromBuffer(buffer)
-      // logger.info("Sharp buffer ok", !sharpNativeImage.isEmpty())
-      clipboard.writeImage(sharpNativeImage)
+async function getFrame(filePath) {
+  if (filePath.startsWith('data:')) {
+    return nativeImage.createFromDataURL(filePath)
+  }
+  if (filePath.endsWith('.gif')) {
+    const frameData = await gifFrames({
+      url: filePath,
+      frames: 0,
+      outputType: 'png'
     })
-  })
-} catch {
-  logger.error("Couldn't install sharp!")
+    const pngBuffer = await new Promise((resolve, reject) => {
+      const chunks = []
+      frameData[0].getImage().on('data', chunk => chunks.push(chunk))
+      frameData[0].getImage().on('end', () => resolve(Buffer.concat(chunks)))
+      frameData[0].getImage().on('error', reject)
+    })
+    return nativeImage.createFromBuffer(
+      pngBuffer
+    )
+  } else {
+    return nativeImage.createFromPath(filePath)
+  }
 }
+
+ipcMain.on('ondragstart', async (event, filePath) => {
+  const cb = (icon) => event.sender.startDrag({ file: filePath, icon })
+  try {
+    var native = await getFrame(filePath)
+
+    var size = native.getSize()
+    if (size.height > 150 || size.width > 150) {
+      native = native.resize({width: 150, height: 150})
+    }
+
+    cb(native)
+  } catch (err) {
+    logger.error("Couldn't process image", err)
+    // eslint-disable-next-line no-undef
+    cb(`${__static}/img/dragSmall.png`)
+  }
+})
+
+ipcMain.handle('copy-image', async (event, payload) => {
+  var native = await getFrame(payload.url)
+  clipboard.writeImage(native)
+})
 
 let openedWithUrl
 const OPENWITH_PROTOCOL = 'mspa'
@@ -625,7 +736,7 @@ const OPENWITH_PROTOCOL = 'mspa'
 async function createWindow () {
   // Create the browser window.
 
-  let mainWindowState = windowStateKeeper({
+  const mainWindowState = windowStateKeeper({
     defaultWidth: 1280,
     defaultHeight: 780
   })
@@ -659,7 +770,7 @@ async function createWindow () {
     if (zoomDirection === 'out') {
       zoomOut()
     }
-  });
+  })
 
   // Catch-all to prevent navigating away from application page
   win.webContents.on('will-navigate', (event) => {
@@ -703,33 +814,42 @@ async function createWindow () {
     ]
   }, (details, callback) => {
     if (details.url.startsWith("assets://")) {
-      const redirectURL = Resources.resolveAssetsProtocol(details.url)
-      if (details.url == redirectURL) {
-        const err = `${details.url} is assets url, resolved protocol to ${redirectURL} but is an infinite loop!`
-        logger.error(err)
-        throw Error(err)
-      } else {
-        // logger.info(details.url, "is assets url, resolved protocol to", redirectURL)
-        const redirect_callback = {redirectURL}
-        callback(redirect_callback)
-      }
-    } else {
-      const destination_url = Resources.resolveURL(details.url)
-      if (details.url == destination_url) {
-        const err = `${details.url} is not assets url, resolving resource to ${destination_url} but is an infinite loop!`
-        logger.error(err)
-        throw Error(err)
-      } else {
-        // Okay
-        const redirect_callback = {
-          redirectURL: destination_url
-        }
-        // logger.info(details.url, "is not assets url, resolving resource to", destination_url)
-        if (details.resourceType == "subFrame")
-          win.webContents.send('TABS_PUSH_URL', destination_url)
-        else
+      // const redirectURL = Resources.resolveAssetsProtocol(details.url)
+      const reply_channel = 'RESOURCES_RESOLVE_ASSETS_PROTOCOL' + details.url
+      win.webContents.send('RESOURCES_RESOLVE_ASSETS_PROTOCOL', reply_channel, details.url)
+      ipcMain.once(reply_channel, (event, redirectURL) => {
+        if (details.url == redirectURL) {
+          const err = `${details.url} is assets url, resolved protocol to ${redirectURL} but is an infinite loop!`
+          logger.error(err)
+          throw Error(err)
+        } else {
+          // logger.info(details.url, "is assets url, resolved protocol to", redirectURL)
+          const redirect_callback = {redirectURL}
           callback(redirect_callback)
-      }
+        }
+      })
+    } else {
+      // const destination_url = Resources.resolveURL(details.url)
+
+      const reply_channel = 'RESOURCES_RESOLVE_URL' + details.url
+      win.webContents.send('RESOURCES_RESOLVE_URL', reply_channel, details.url)
+      ipcMain.once(reply_channel, (event, destination_url) => {
+        if (details.url == destination_url) {
+          const err = `${details.url} is not assets url, resolving resource to ${destination_url} but is an infinite loop!`
+          logger.error(err)
+          throw Error(err)
+        } else {
+          // Okay
+          const redirect_callback = {
+            redirectURL: destination_url
+          }
+          // logger.info(details.url, "is not assets url, resolving resource to", destination_url)
+          if (details.resourceType == "subFrame")
+            win.webContents.send('TABS_PUSH_URL', destination_url)
+          else
+            callback(redirect_callback)
+        }
+      })
     }
   })
 
@@ -739,14 +859,18 @@ async function createWindow () {
   win.webContents.on('new-window', (event, url) => {
     event.preventDefault()
 
-    const parsedURL = Resources.resolveURL(url)
-    logger.info(`new-window: ${url} ===> ${parsedURL}`)
+    // const parsedURL = Resources.resolveURL(url)
+    const reply_channel = 'RESOURCES_RESOLVE_URL_REPLY' + url
+    win.webContents.send('RESOURCES_RESOLVE_URL', reply_channel, url)
+    ipcMain.once(reply_channel, (event, parsedURL) => {
+      logger.info(`new-window: ${url} ===> ${parsedURL}`)
 
-    // If the given URL is still external, open a browser window.
-    if (/http/.test(parsedURL))
-      shell.openExternal(url) 
-    else
-      win.webContents.send('TABS_NEW', {url: parsedURL, adjacent: true})
+      // If the given URL is still external, open a browser window.
+      if (/http/.test(parsedURL))
+        shell.openExternal(url)
+      else
+        win.webContents.send('TABS_NEW', {url: parsedURL, adjacent: true})
+    })
   })
 
   if (process.env.WEBPACK_DEV_SERVER_URL) {
@@ -793,14 +917,7 @@ async function createWindow () {
 }
 
 app.removeAsDefaultProtocolClient(OPENWITH_PROTOCOL)
-if (isDevelopment && process.platform === 'win32') {
-  // Set the path of electron.exe and your app.
-  // These two additional parameters are only available on windows.
-  // Setting this is required to get this working in dev mode.
-  app.setAsDefaultProtocolClient(OPENWITH_PROTOCOL, process.execPath, [
-    path.resolve(process.argv[1])
-  ])
-} else {
+if (!isDevelopment) {
   app.setAsDefaultProtocolClient(OPENWITH_PROTOCOL)
 }
 

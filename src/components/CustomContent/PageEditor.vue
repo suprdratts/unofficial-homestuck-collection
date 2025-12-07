@@ -68,11 +68,11 @@
 
 <script>
 // @ is an alias to /src
-import VanillaPage from '@/components/Page/Page.vue'
-import SinglePage from '@/components/Page/SinglePage.vue'
+import VanillaPage from '@/components/StoryPage/Page.vue'
+import SinglePage from '@/components/StoryPage/SinglePage.vue'
 import StoryPageLink from '@/components/UIElements/StoryPageLink.vue'
 import MspaPageSelector from '@/components/UIElements/MspaPageSelector.vue'
-import PageFooter from '@/components/Page/PageFooter.vue'
+import PageFooter from '@/components/StoryPage/PageFooter.vue'
 import Settings from '@/components/SystemPages/Settings.vue'
 
 // FIXME: Vue update broke this
@@ -84,7 +84,7 @@ const LivePage = {
     return {
       ...VanillaPage.data(),
       tab: {},
-      routeParams: {},
+      routeParams: {}
     }
   },
   props: ['thisPage'],
@@ -101,6 +101,7 @@ const LivePage = {
   }
 }
 delete LivePage.computed.thisPage
+delete LivePage.computed.__file
 
 function listEditor(prop, joiner=",") {
   return {
@@ -154,7 +155,7 @@ export default {
       } else {
         const liverefs = this.$refs.LivePage.$refs
         // Need a fallback element in case a page renders without one of these (i.e. supercartridge)
-        const fallbackElem = this.$refs.LivePage.$el
+        const fallbackElem = this.$el.querySelector("div.page")
         this.bboxes = {
           pageTitle: (liverefs.pageTitle || fallbackElem).getBoundingClientRect(),
           media: (liverefs.media || fallbackElem).getBoundingClientRect(),
@@ -225,6 +226,9 @@ export default {
   },
   created () {
     this.$logger.info("Created")
+    // Sometimes this doesn't "stick"? Reapply.
+    delete LivePage.computed.thisPage
+    delete LivePage.computed.__file
     this.$nextTick(() => {
       this.tabFrame.$el.addEventListener('scroll', this.handleScroll)
       setTimeout(this.reloadBboxes(), 2000)
@@ -300,9 +304,8 @@ export default {
       // For some reason, setting an input's background breaks the border in weird ways.
       border-width: thin;
     }
-    a {
-      color: var(--page-links);
-    }
+    a { color: var(--page-links); }
+    a:link:active { color: var(--page-links-active); }
     .hint {
       margin-top: 0;
       font-family: sans-serif;

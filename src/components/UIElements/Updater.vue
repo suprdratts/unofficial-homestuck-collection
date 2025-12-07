@@ -8,7 +8,7 @@
 </template>
 
 <script>
-const semverGreater = (a, b) => a.localeCompare(b, undefined, { numeric: true }) === 1
+const semver = require("semver");
 
 const tagToSemver = (tag_name) => tag_name.replace(/^[Vv]/, '').replace(/-\w*$/, '')
 
@@ -52,7 +52,7 @@ export default {
     },
     appHasUpdate(){
       if (!this.ghReleases) return undefined
-      return semverGreater(this.appLatestReleaseSemver, this.appVersionCurrent)
+      return semver.gt(this.appLatestReleaseSemver, this.appVersionCurrent)
     },
     assetVersionCurrent(){
       return this.$archive.version
@@ -60,17 +60,31 @@ export default {
     }
   },
   methods: {
-    doUpdateCheck(){
-      fetch(`https://api.github.com/repos/${this.ghOwner}/${this.ghRepo}/releases`)
-        .then(response => response.json())
-        .then(data => { this.ghReleasesRaw = data })
+    async doUpdateCheck(){
+      try {
+        const response = await fetch(`https://api.github.com/repos/${this.ghOwner}/${this.ghRepo}/releases`)
+        const data = await response.json()
+        this.ghReleasesRaw = data
+      } catch {
+        // Probably just offline, pass
+      }
     }
   },
   watch: {
   },
   mounted(){
-    if (this.$localData.settings.allowSysUpdateNotifs)
-      this.doUpdateCheck()
+    const is_flatpak = !!(process.env.container)
+    if (this.$localData.settings.allowSysUpdateNotifs && !is_flatpak) {
+      const now = new Date()
+      const last_checked = new Date(this.$localData.settings.lastCheckedUpdate)
+      const one_day = (12 * 60 * 60 * 1000)
+      if (last_checked == "Invalid Date" || now - last_checked > one_day) {
+        this.doUpdateCheck()
+        this.$localData.settings.lastCheckedUpdate = now.toISOString()
+      } else {
+        this.$logger.info("Skipping update check, already checked", last_checked)
+      }
+    }
   }
 }
 </script>
@@ -117,4 +131,3 @@ export default {
     }
  }
 </style>
-

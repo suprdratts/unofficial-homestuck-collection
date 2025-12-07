@@ -1,6 +1,8 @@
 // isWebApp for main-process electron execution
 const isWebApp = ((typeof window !== 'undefined') && window.isWebApp) || false
 
+const semver = require('semver')
+
 const importSassJs = () => import('sass.js')
 const importYaml = () => import('js-yaml')
 const importResources = import("@/resources.js")
@@ -9,8 +11,8 @@ var Resources // lazy
 var yaml
 
 if (!Array.prototype.toReversed) {
-  const toReversed = require('array.prototype.toreversed');
-  var shimmed = toReversed.shim();
+  const toReversed = require('array.prototype.toreversed')
+  toReversed.shim()
 }
 
 var ipcMain, fs
@@ -19,6 +21,7 @@ if (!isWebApp) {
   var {ipcMain} = require('electron')
 
   log = require('electron-log')
+  log.transports.console.level = "info"
 
   const Store = require('electron-store')
   store = new Store()
@@ -39,7 +42,7 @@ if (!isWebApp) {
 }
 
 const path = (isWebApp ? require('path-browserify') : require('path'))
-const ipcRenderer = require('electron').ipcRenderer
+const ipcRenderer = require('IpcRenderer')
 
 // const sass = require('sass')
 // const SassJs = require('sass.js')
@@ -52,11 +55,16 @@ const modsAssetsRoot = "assets://mods/"
 const imodsDir = (isWebApp && window.webAppIModsDir) || (assetDir ? path.join(assetDir, "archive", "imods") : undefined)
 const imodsAssetsRoot = "assets://archive/imods/"
 
-var modChoices = undefined
 var routes = undefined
 
 const store_modlist_key = 'settings.modListEnabled'
-// const store_devmode_key = 'settings.devMode'
+
+var flag_failures_dont_interrupt = false
+
+if (ipcMain) {
+  logger.error("Main background process loading modsjs")
+  console.trace()
+}
 
 let validatedState = false
 function expectWorkingState(){
@@ -75,7 +83,7 @@ function fsExistsAsync(path) {
       } else {
         reject(err)
       }
-    });
+    })
   })
 }
 
@@ -91,7 +99,8 @@ if (ipcRenderer) {
   setLoadStage = function(stage) {
     try {
       logger.debug(stage)
-      ipcRenderer._events['SET_LOAD_STAGE'](null, stage)
+      window.vm.$root.loadStage = stage
+      // ipcRenderer._events['SET_LOAD_STAGE'](null, stage)
     } catch (e) {
       logger.warn(e)
     }
@@ -117,7 +126,7 @@ function getAssetRoute(url) {
 
   // Lazily bake routes as needed instead of a init hook
   if (routes == undefined) {
-    logger.warn("Routes not loaded yet", (ipcMain ? 'main' : 'render'))
+    logger.warn("Routes not loaded yet", (ipcMain ? 'main' : 'render'), url)
     return undefined
   //   logger.info("Baking routes lazily, triggered by", url)
   //   bakeRoutes()
@@ -128,7 +137,7 @@ function getAssetRoute(url) {
   }
 
   const file_route = routes[url]
-  if (file_route) logger.debug(url, "to", file_route)
+  if (file_route) logger.debug("Routing", url, "to", file_route)
   return file_route
 }
 
@@ -156,8 +165,36 @@ async function extractimods() {
     logger.info("Not yet in working state, not extracting imods.")
     return
   }
+  if (isWebApp) {
+    logger.error("Refusing to extract imods in webapp mode. Should not have called this!")
+    return
+  }
   // Some people report occasionally getting "__webpack_require__.match is not a function or its return value is not iterable" at this line. Have not been able to reproduce the error so far.
 
+  setLoadStage("VALIDATE_IMODS_EXTRAS")
+  try {
+    const Validation = await import('@/js/validation.js')
+    const crc_table_imods = await import('@/js/crc_imods.json')
+    const state = await Validation.validateFiles(imodsDir, crc_table_imods)
+    for (const extra_path of state.extra_paths) {
+      const target_path = path.join(imodsDir, extra_path)
+      logger.warn("Deleting extra imod file", target_path)
+      fs.unlink(target_path, err => {
+        if (err) logger.error(err)
+      })
+    }
+  } catch (e) {
+    if (e.code == "ENOENT") {
+      // First run, pass
+    } else {
+      throw e
+    }
+  }
+  // There may be validation entries for missing files here
+  // if imods' crc file was built with WIP files in the working tree.
+  // Since we just extracted the tar file successfully, ignore these...
+
+  setLoadStage("EXTRACT_IMODS")
   const Tar = await import('tar')
   let tardata
   try {
@@ -202,64 +239,74 @@ function removeModsFromEnabledList(responsible_mods) {
 }
 
 function onModLoadFail(responsible_mods, e) {
-  if (!expectWorkingState())
+  if (!expectWorkingState() || flag_failures_dont_interrupt)
     return // Pre-setup, we're probably fine ignoring this.
 
-  debugger
+  // eslint-disable-next-line no-debugger
+  debugger // If you have devtools open, break here! Inspection time!
 
-  store.set("needsRecovery", true)
+  if (window.vm && window.vm.loadStage) {
+    // If we have a functional VM, pass error info to error recovery
+    logger.warn("RENDER: Mod load failure with modlist", responsible_mods)
+    logger.error(e)
 
-  logger.warn("RENDER: Mod load failure with modlist", responsible_mods)
-  logger.error(e)
+    window.vm.$root.loadState = "ERROR"
+    window.vm.$root.loadError = e
+    window.vm.$root.loadErrorResponsibleMods = responsible_mods
+  } else {
+    store.set("needsRecovery", true)
 
-  window.doErrorRecover = () => {
-    removeModsFromEnabledList(responsible_mods)
-    // Have to invoke reload because we probably don't even have the VM at this point
-    ipcRenderer.invoke('reload')
-  }
-  window.doReloadNoRecover = () => ipcRenderer.invoke('reload')
-  window.doFullRestart = () => ipcRenderer.invoke('restart')
+    logger.warn("RENDER: Mod load failure with modlist", responsible_mods)
+    logger.error(e)
 
-  function sanitizeHTML(str) {
-    var temp = document.createElement('div')
-    temp.textContent = str
-    return temp.innerHTML
-  };
+    window.doErrorRecover = () => {
+      removeModsFromEnabledList(responsible_mods)
+      // Have to invoke reload because we probably don't even have the VM at this point
+      ipcRenderer.invoke('reload')
+    }
+    window.doReloadNoRecover = () => ipcRenderer.invoke('reload')
+    window.doFullRestart = () => ipcRenderer.invoke('restart')
 
-  document.body.innerHTML = `
-  <style>
-  div {
-    background: #fff;
-    color: #000;
-  }
-  div > * { max-width: 100% }
-  div > div { padding: 1em; }
-  p { font-family: sans-serif; }
-  pre { white-space: pre-wrap; }
-  </style>
-  <div>
-    <p style="-webkit-app-region: drag; background: #aaa;">Error</p>
+    function sanitizeHTML(str) {
+      var temp = document.createElement('div')
+      temp.textContent = str
+      return temp.innerHTML
+    };
+
+    document.body.innerHTML = `
+    <style>
+    div {
+      background: #fff;
+      color: #000;
+    }
+    div > * { max-width: 100% }
+    div > div { padding: 1em; }
+    p { font-family: sans-serif; }
+    pre { white-space: pre-wrap; }
+    </style>
     <div>
-      <p>Something went wrong while loading mods <em>${responsible_mods}</em>!
-      These have been disabled for safety.</p>
-      <pre>${sanitizeHTML(e)}</pre>
-      <input type="button" value="1. Disable blamed mods and Reload" onclick="doErrorRecover()" /><br />
-      <input type="button" value="2. Restart and attempt auto-recovery (if 1 didn't work)" onclick="doFullRestart()" /><br />
-      <input type="button" value="3. Attempt reload without making changes (if you made external changes)" onclick="doReloadNoRecover()" /><br />
-      <p>For troubleshooting, save this error message or the <a href="${log.transports ? log.transports.file.getFile() : ''}">log file</a></p><br />
-      <p>Stacktrace:</p>
-      <pre>${sanitizeHTML(e.stack)}</pre>
-    </div>
-  </div>`
+      <p style="-webkit-app-region: drag; background: #aaa;">Error</p>
+      <div>
+        <p>Something went wrong while loading mods <em>${responsible_mods}</em>!
+        These have been disabled for safety.</p>
+        <pre>${sanitizeHTML(e)}</pre>
+        <input type="button" value="1. Disable blamed mods and Reload" onclick="doErrorRecover()" /><br />
+        <input type="button" value="2. Restart and attempt auto-recovery (if 1 didn't work)" onclick="doFullRestart()" /><br />
+        <input type="button" value="3. Attempt reload without making changes (if you made external changes)" onclick="doReloadNoRecover()" /><br />
+        <p>For troubleshooting, save this error message or the <a href="${log.transports ? log.transports.file.getFile() : ''}">log file</a></p><br />
+        <p>Stacktrace:</p>
+        <pre>${sanitizeHTML(e.stack)}</pre>
+      </div>
+    </div>`
+  }
 }
 
 async function bakeRoutes(enabled_mods_js) {
-  const enabled_mods = getEnabledMods()
   if (!expectWorkingState()) {
     logger.warn("No asset directory set, not baking any routes")
     return
   }
-  // logger.info("Baking routes for", enabled_mods)
+  logger.debug("Baking routes for", enabled_mods_js.map(j => j._id))
   const all_mod_routes = {}
   // Start with least-priority so they're overwritten
   for (const js of enabled_mods_js.toReversed()) {
@@ -277,15 +324,20 @@ async function bakeRoutes(enabled_mods_js) {
 
           const tree = await crawlFileTree(path.join(js._mod_root_dir, mod_tree), true)
           const treeroutes = getTreeRoutes(tree)
+
           treeroutes.forEach(route => {
             const route_href = new URL(asset_tree + route).href
-            all_mod_routes[route_href] =
-              new URL((path.posix || path).join(mod_tree, route), js._mod_root_url).href
+            const dest_href = new URL((path.posix || path).join(mod_tree, route), js._mod_root_url).href
+            if (route_href == dest_href) {
+              console.warn(`${js._id} tried to route an asset to itself: ${route_href}`)
+            } else {
+              all_mod_routes[route_href] = dest_href
+            }
           })
         }
       }
       
-      // Higher priority: manual routes
+      // Higher priority: explicit routes
       for (const key in js.routes || {}) {
         const local = new URL(js.routes[key], js._mod_root_url).href
         console.assert(!(js._singlefile && local.includes(js._mod_root_url)), js.title, "Single file mods cannot use local route!")
@@ -299,20 +351,6 @@ async function bakeRoutes(enabled_mods_js) {
   }
 
   routes = all_mod_routes
-
-  // logger.debug(all_mod_routes)
-  if (ipcRenderer) {
-    // logger.debug('Render sending routes to main')
-    ipcRenderer.invoke('MODS_UPDATE_ROUTES', routes)
-  }
-}
-if (ipcMain) {
-  // Update `routes` in the background process scope, for when
-  // Resources needs to fetch route info statically.
-  ipcMain.handle('MODS_UPDATE_ROUTES', (event, all_mod_routes) => {
-    // logger.debug('Main updating routes from render msg')
-    routes = all_mod_routes
-  })
 }
 
 async function doFullRouteCheck(){
@@ -342,7 +380,7 @@ function getEnabledMods() {
         ? store.get(store_modlist_key)
         : []))
 
-  // logger.debug("got mod settings", store_modlist_key, list)
+  // Easy tweaks
 
   list.push("_twoToThree")
 
@@ -350,6 +388,13 @@ function getEnabledMods() {
     list.push("_unpeachy")
   if (store.get('settings.pxsTavros'))
     list.push("_pxsTavros")
+  if (store.get('settings.notitty'))
+    list.push("_notitty")
+  if (!store.get('settings.newReader.limit'))
+    list.push("_secret")
+
+  // Complicated flash ones
+
   if (store.get('settings.jsFlashes'))
     list.push("_replaybound")
 
@@ -363,9 +408,6 @@ function getEnabledMods() {
 
   if (store.get('settings.hqAudio'))
     list.push("_hqAudio")
-
-  if (!store.get('settings.newReader.limit'))
-    list.push("_secret")
 
   return list
 }
@@ -448,6 +490,8 @@ async function buildApi(mod) {
     if (mod._singlefile) throw new Error(`Singlefile mods cannot use this method`)
     if (!local_path.startsWith("./")) throw new Error(`${local_path}: Paths must be mod relative (./)`)
     if (local_path.includes("/..")) throw new Error(`${local_path}: You know what you did`)
+      
+    if (isWebApp) throw new Error(`Cannot read files in webapp mode. You need to webpack these!`)
   }
   function readFileSyncLocal(local_path, method_name) {
     safetyChecks(local_path)
@@ -506,7 +550,8 @@ async function buildApi(mod) {
     readYamlAsync(asset_path, callback) {
       return readFileAsyncLocal(asset_path, "readYamlAsync").then(text => yaml.safeLoad(text)).then(callback)
     },
-    Resources
+    Resources,
+    ipcRenderer
   }
   var logger
   Object.defineProperty(api, 'logger', {
@@ -544,30 +589,32 @@ async function getModJsAsync(mod_dir, options = {}) {
 
     // Set mod name, path, and is_directory:
 
-    if (mod_dir.endsWith(".js")) {
-      // logger.debug(mod_dir, "is explicit singlefile.")
-      is_singlefile = true
-      modjs_name = mod_dir
-      modjs_path = path.join(thisModsDir, mod_dir)
-    } else {
-      // Mod isn't explicitly a singlefile js, but might still be a singlefile that needs coercion
-      try {
-        const is_directory = !(fs.lstatSync(path.join(thisModsDir, mod_dir)).isFile()) // allow for junctions, symlinks
-        if (is_directory) {
-          is_singlefile = false
-          modjs_name = path.join(mod_dir, "mod.js")
-          modjs_path = path.join(thisModsDir, modjs_name)
-        } else {
+    if (!isWebApp) {
+      if (mod_dir.endsWith(".js")) {
+        // logger.debug(mod_dir, "is explicit singlefile.")
+        is_singlefile = true
+        modjs_name = mod_dir
+        modjs_path = path.join(thisModsDir, mod_dir)
+      } else {
+        // Mod isn't explicitly a singlefile js, but might still be a singlefile that needs coercion
+        try {
+          const is_directory = !(fs.lstatSync(path.join(thisModsDir, mod_dir)).isFile()) // allow for junctions, symlinks
+          if (is_directory) {
+            is_singlefile = false
+            modjs_name = path.join(mod_dir, "mod.js")
+            modjs_path = path.join(thisModsDir, modjs_name)
+          } else {
+            is_singlefile = true
+            modjs_name = mod_dir + ".js"
+            modjs_path = path.join(thisModsDir, modjs_name)
+          }
+        } catch (e) {
+          // lstatsync threw error; js-less path didn't exist at all, so singlefile.
+          // logger.error(mod_dir, "must be singlefile, errored", e)
           is_singlefile = true
           modjs_name = mod_dir + ".js"
           modjs_path = path.join(thisModsDir, modjs_name)
         }
-      } catch (e) {
-        // lstatsync threw error; js-less path didn't exist at all, so singlefile.
-        // logger.error(mod_dir, "must be singlefile, errored", e)
-        is_singlefile = true
-        modjs_name = mod_dir + ".js"
-        modjs_path = path.join(thisModsDir, modjs_name)
       }
     }
 
@@ -613,6 +660,12 @@ async function getModJsAsync(mod_dir, options = {}) {
       }
 
       if (!options.liteload) {
+        var b = mod_module.minAppVersion
+        var a = window.appVersion
+        if (a && b && !semver.gte(a, b)) {
+          throw Error(`${mod_module._id} ${mod_module.modVersion} requires at least app ${mod_module.minAppVersion}`)
+        }
+
         let api
         if (mod_module.computed != undefined) {
           api = api || await buildApi(mod_module)
@@ -641,7 +694,8 @@ async function getModJsAsync(mod_dir, options = {}) {
       // Anything that needs to recompute vueHooks (and restart the vm)
       mod_module._needsHardReload = [
         'styles', 'vueHooks', 'themes',
-        'browserPages', 'browserActions', 'browserToolbars'
+        'browserPages', 'browserActions', 'browserToolbars',
+        'styles'
       // eslint-disable-next-line no-prototype-builtins
       ].some(k => mod_module.hasOwnProperty(k))
 
@@ -677,9 +731,14 @@ async function getModJsAsync(mod_dir, options = {}) {
     const e1_is_notfound = (e1.code && e1.code === "MODULE_NOT_FOUND")
     if (e1_is_notfound) {
       // Tried singlefile, missing
-      logger.error("Missing file", mod_dir, e1)
-      removeModsFromEnabledList([mod_dir])
-      return null
+      if (mod_dir.startsWith("_")) {
+        console.log("Failed loading imod. Asset pack broken.")
+        onModLoadFail([mod_dir], e1)
+      } else {
+        logger.error("Missing file", mod_dir, e1)
+        removeModsFromEnabledList([mod_dir])
+        return null
+      }
     } else {
       // Singlefile found, other error
       logger.error("File found, other error")
@@ -694,15 +753,68 @@ const footnote_categories = ['story']
 // ====================================
 // Interface
 
+async function editArchiveFromModJs(archive, js) {
+  !js.hidden && setLoadStage(`${js._id} initializing`)
+  // Fully await any computed properties to be resolved
+  await Promise.resolve(js._fullyLoadedPromise)
+
+  // Load footnotes into archive
+  if (js.footnotes) {
+    !js.hidden && setLoadStage(`${js._id} adding footnotes`)
+    if (typeof js.footnotes == "string") {
+      console.assert(!js._singlefile, js.title, "Single file mods cannot use footnote files!")
+
+      const json_path = path.join(
+        js._mod_root_dir,
+        js.footnotes
+      )
+
+      logger.info(js.title, "Loading footnotes from file", json_path)
+      const footObj = JSON.parse(
+        await fs.promises.readFile(json_path)
+      )
+      mergeFootnotes(archive, footObj)
+    } else if (Array.isArray(js.footnotes)) {
+      logger.info(js.title, "Loading footnotes from object")
+      mergeFootnotes(archive, js.footnotes)
+    } else {
+      throw new Error(`${js.title} Incorrectly formatted mod. Expected string or array, got '${typeof jsfootnotes}'`)
+    }
+  }
+
+  // Run archive edit function
+  const editfn = js.edit
+  if (editfn) {
+    !js.hidden && setLoadStage(`${js._id} editing story`)
+    logger.debug(js._id, "editing archive")
+    editfn(archive)
+  }
+  if (js.editPage) {
+    if (!archive.tweaks.postprocessors) {
+      archive.tweaks.postprocessors = []
+    }
+    archive.tweaks.postprocessors.push({
+      mod_id: js._id,
+      fn: js.editPage
+    })
+  }
+}
+
 async function editArchiveAsync(archive) {
   if (!expectWorkingState()) {
     logger.warn("No asset directory set, probably in new reader setup mode. Not editing the archive.")
     return
   }
 
+  try {
+    fs.lstatSync(path.resolve(imodsDir, '_replaybound/Sburb.dev.js'))
+  } catch {
+    logger.warn(`Sburb.dev.js missing from disk. Overzealous antivirus? Repairing...`)
+    want_imods_extracted = true
+  }
+
   if (want_imods_extracted) {
     logger.info("Extracting imods")
-    setLoadStage("EXTRACT_IMODS")
     await extractimods()
     want_imods_extracted = false // we did it
   }
@@ -718,6 +830,7 @@ async function editArchiveAsync(archive) {
     archive.footnotes = {}
   } catch {
     // frozen
+    logger.error("Vanilla archive object contains footnotes? Wiping.")
     for (var member in archive.footnotes) delete archive.footnotes[member]
   }
 
@@ -726,54 +839,46 @@ async function editArchiveAsync(archive) {
   })
 
   for (const js of enabledModsJs.reverse()) {
-    // Fully await any computed properties to be resolved
-    await Promise.resolve(js._fullyLoadedPromise)
-
-    // Load footnotes into archive
     try {
-      if (js.footnotes) {
-        !js._internal && setLoadStage(`${js._id} adding footnotes`)
-        if (typeof js.footnotes == "string") {
-          console.assert(!js._singlefile, js.title, "Single file mods cannot use footnote files!")
-
-          const json_path = path.join(
-            js._mod_root_dir,
-            js.footnotes
-          )
-
-          logger.info(js.title, "Loading footnotes from file", json_path)
-          const footObj = JSON.parse(
-            await fs.promises.readFile(json_path)
-          )
-          mergeFootnotes(archive, footObj)
-        } else if (Array.isArray(js.footnotes)) {
-          logger.info(js.title, "Loading footnotes from object")
-          mergeFootnotes(archive, js.footnotes)
-        } else {
-          throw new Error(`${js.title} Incorrectly formatted mod. Expected string or array, got '${typeof jsfootnotes}'`)
-        }
-      }
-    } catch (e) {
-      logger.error(e)
-      if (js._id.startsWith("_")) await extractimods()
-      onModLoadFail([js._id], e)
-    }
-
-    // Run archive edit function
-    try {
-      const editfn = js.edit
-      if (editfn) {
-        !js._internal && setLoadStage(`${js._id} editing story`)
-        logger.debug(js._id, "editing archive")
-        editfn(archive)
-      }
+      await editArchiveFromModJs(archive, js)
     } catch (e) {
       if (js._id.startsWith("_")) await extractimods()
       onModLoadFail([js._id], e)
       throw e
     }
-    // setLoadStage("READ_MODS")
   }
+
+  if (archive.tweaks.postprocessors) {
+    function postprocessPage(page, page_data) {
+      // Run postprocessor functions on page-copy
+      archive.tweaks.postprocessors.forEach(p => {
+        try {
+          p.fn(page_data)
+        } catch (e) {
+          onModLoadFail([p.mod_id], e)
+        }
+      })
+
+      // Write page-copy changes back to real page object
+      // (including overwriting the getter triggering postprocessing)
+      Object.keys(page_data).forEach(key => {
+        Object.defineProperty(page, key, {value: page_data[key]})
+      })
+    }
+
+    // Note: If multiple getters ever trigger postprocessing, some work is needed
+    // to keep pages from being postprocessed multiple times by each property.
+    Object.values(archive.mspa.story).forEach(page => {
+      const page_data = {...page}
+      Object.defineProperty(page, 'content', {
+        get() {
+          postprocessPage(this, page_data)
+          return this.content
+        }
+      })
+    })
+  }
+
   setLoadStage("BAKE_ROUTES")
   await bakeRoutesPromise
   setLoadStage("MODS_DONE")
@@ -810,33 +915,49 @@ function mergeFootnotes(archive, footObj) {
 
 function getMainMixin(){
   // A mixin that injects on the main vue process.
-  // Currently this just injects custom css
 
   const enabledModsJsPromise = getEnabledModsJsAsync() // Promise
   return {
     mounted() {
       const addScssStyle = (style_id, body) => {
-        importSassJs().then(SassJs => {
-          SassJs.compile(body, (result) => {
-            if (result.status !== 0) throw Error(JSON.stringify(result))
-            this.stylesheets.push({
-              id: style_id,
-              body: result.text
+        // Cache in store
+        const cache_id = `stylecache.${style_id}`
+        if (store_mods.has(cache_id)) {
+          logger.info(`Using cached style ${style_id}`)
+          this.stylesheets.push({
+            id: style_id,
+            body: store_mods.get(cache_id)
+          })
+        } else {
+          importSassJs().then(SassJs => {
+            logger.info(`Compiling style ${style_id}`)
+            if (isWebApp) {
+              // TODO: Can webpack do this?
+              body = body.replace(/(assets:\/\/.+)(?=\);)/g, (match) => Resources.resolveAssetsProtocol(match))
+            }
+            SassJs.compile(body, (result) => {
+              if (result.status !== 0) throw Error(JSON.stringify(result))
+              store_mods.set(cache_id, result.text)
+              this.stylesheets.push({
+                id: style_id,
+                body: result.text
+              })
             })
           })
-        })
+        }
       }
 
       enabledModsJsPromise.then(modules => {
         modules.forEach(async js => {
           await Promise.resolve(js._fullyLoadedPromise)
+
+          // Render stylesheets from mod css
           try {
             const modstyles = js.styles || []
             if (!Array.isArray(modstyles)) {
               throw Error(`${js._id} styles object is not a list`)
             }
 
-            // Render stylesheets from mod css
             modstyles.forEach((customstyle, i) => {
               const style_id = `style-${js._id}-${String(js.version).replace(/\./g, '_')}-${i}`
 
@@ -930,14 +1051,20 @@ function getMainMixin(){
 async function getMixinsAsync(){
   // This is absolutely black magic
 
+  // Since this is mixins, the vm isn't initialized yet. Try to wait.
+  flag_failures_dont_interrupt = true
+
   const nop = () => undefined
 
   const enabledModsJs = await getEnabledModsJsAsync()
+
+  flag_failures_dont_interrupt = false
 
   // List of mods, ordered
   var mixable_mods = enabledModsJs.toReversed()
 
   // Add mod that contains vue hooks for custom themes
+  // Flatten mods with themes down to one mixin.
   var newThemes = mixable_mods.reduce((themes, js) => {
     if (!js.themes) return themes
     return themes.concat(js.themes.map((theme, i) => 
@@ -955,6 +1082,7 @@ async function getMixinsAsync(){
   }
 
   // Add mod that contains vue hooks custom pages
+  // Flatten mods with pages down to one mixin.
   var newPages = mixable_mods.reduce((pages, js) => {
     if (!js.browserPages) return pages
     return {...js.browserPages, ...pages}
@@ -977,6 +1105,7 @@ async function getMixinsAsync(){
   }
 
   // Add mod that contains custom browser actions
+  // Flatten mods with actions down to one mixin.
   var newBrowserActions = mixable_mods.reduce((actions, js) => {
     if (js.browserActions) {
       for (const k in js.browserActions) {
@@ -1002,6 +1131,7 @@ async function getMixinsAsync(){
   }
 
   // Add mod that contains custom browser toolbars
+  // Flatten mods with toolbars down to one mixin.
   var newBrowserToolbars = mixable_mods.reduce((toolbars, js) => {
     if (js.browserToolbars) {
       for (const k in js.browserToolbars) {
@@ -1135,16 +1265,28 @@ async function getMixinsAsync(){
   return [mixin]
 }
 
-// Runtime
-// Grey magic. This file can be run from either process, but only the main process will do file handling.
 function jsToChoice(js, dir){
+  var mod_version = js.modVersion
+  if (js.version) {
+    logger.warn(`${js._id}: the 'version' property is deprecated. Use 'modVersion' and 'minAppVersion' instead.`)
+    mod_version = mod_version || js.version
+  }
+
+  var compatible = true
+  if (js.minAppVersion && !semver.gte(window.appVersion, js.minAppVersion)) {
+    // throw Error(`${js._id} ${js.modVersion} requires at least app ${js.minAppVersion}`)
+    compatible = false
+  }
+
   return {
     label: js.title,
     summary: js.summary,
     description: js.description,
     author: js.author,
-    modVersion: js.modVersion,
+    modVersion: mod_version,
     locked: js.locked,
+    compatible: compatible,
+    minAppVersion: js.minAppVersion,
 
     hasmeta: Boolean(js.author || js.modVersion || js.settings || js.description),
     needsArchiveReload: js._needsArchiveReload,
@@ -1154,7 +1296,7 @@ function jsToChoice(js, dir){
 
     includes: {
       routes: Boolean(js.routes || js.treeroute || js.trees),
-      edits: Boolean(js.edit),
+      edits: Boolean(js.edit) || Boolean(js.editPage),
       hooks: (js.vueHooks 
         ? Array.from(new Set(js.vueHooks.map(h => (h.matchName || "[complex]")))) 
         : false),
@@ -1170,72 +1312,80 @@ function jsToChoice(js, dir){
 
 async function tryExtractZipsForFilesystemIlliteratesAsync(tree) {
   // Extract zips left incorrectly in mods folder
-  const unzipper = require("unzipper")
-
-  const outpath = modsDir // path.join(assetDir, "mods")
-
-  // if (!(await fsExistsAsync(outpath)))
-  //   fs.mkdirSync(outpath)
 
   const zip_archives = Object.keys(tree).filter(p => /\.zip$/.test(p))
-  await Promise.all(zip_archives.map(async zip_name => {
-    const zip_path = path.join(modsDir, zip_name)
-    console.log(`Extracting ${zip_path} to ${outpath}`)
-    fs.createReadStream(zip_path).pipe(
-      unzipper.Extract({
-        path: outpath,
-        concurrency: 5
+  if (zip_archives.length > 0) {
+    const unzipper = require("unzipper")
+    const outpath = modsDir // path.join(assetDir, "mods")
+
+    await Promise.all(zip_archives.map(async zip_name => {
+      const zip_path = path.join(modsDir, zip_name)
+      console.log(`Extracting ${zip_path} to ${outpath}`)
+      fs.createReadStream(zip_path).pipe(
+        unzipper.Extract({
+          path: outpath,
+          concurrency: 5
+        })
+      ).on('finish', function() {
+        setTimeout(() => fs.unlink(zip_path, err => {
+          if (err) console.log(err)
+        }), 1000) // OS doesn't release it right away even after finish
       })
-    ).on('finish', function() {
-      setTimeout(() => fs.unlink(zip_path, err => {
-        if (err) console.log(err)
-      }), 1000) // OS doesn't release it right away even after finish
-    })
-  }))
+    }))
+  }
 }
 
 async function loadModChoicesAsync(){
   // Get the list of mods players can choose to enable/disable
   var mod_folders
-  try {
-    if ((await fsExistsAsync(assetDir)) && !(await fsExistsAsync(modsDir))){
-      logger.warn("Asset pack exists but mods dir doesn't, making empty folder")
-      fs.mkdirSync(modsDir)
-    }
-    const tree = await crawlFileTree(modsDir, false)
 
-    try {
-      await tryExtractZipsForFilesystemIlliteratesAsync(tree)
-    } catch (e) {
-      logger.info(e, "(who cares?)")
-    }
-
-    async function isRootValidMod(file_name) {
-      if (/\.js$/.test(file_name))
-        return true;
-      if (tree[file_name] === undefined) {
-        if (await fsExistsAsync(path.join(modsDir, file_name, "mod.js")))
-          return true
-      }
-      logger.warn("Not a mod:", file_name, path.join(file_name, "mod.js"))
-      return false
-    }
-
-    // .js file or folder of some sort
-
-    const roots = Object.keys(tree)
-    const filter = await Promise.all(roots.map(isRootValidMod))
-    mod_folders = roots.filter((_, i) => filter[i])
-  } catch (e) {
+  if (isWebApp) {
+    throw new Error("Unimplemented")
+  } else if (assetDir == undefined) {
     // No mod folder at all. That's okay.
-    logger.error(e)
+    logger.info("Asset dir not yet defined. (First run)")
     return []
+  } else {
+    try {
+      if ((await fsExistsAsync(assetDir)) && !(await fsExistsAsync(modsDir))){
+        logger.warn("Asset pack exists but mods dir doesn't, making empty folder")
+        fs.mkdirSync(modsDir)
+      }
+      const tree = await crawlFileTree(modsDir, false)
+
+      try {
+        await tryExtractZipsForFilesystemIlliteratesAsync(tree)
+      } catch (e) {
+        logger.info(e, "(who cares?)")
+      }
+
+      async function isRootValidMod(file_name) {
+        if (/\.js$/.test(file_name))
+          return true
+        if (tree[file_name] === undefined) {
+          if (await fsExistsAsync(path.join(modsDir, file_name, "mod.js")))
+            return true
+        }
+        logger.warn("Not a mod:", file_name, path.join(file_name, "mod.js"))
+        return false
+      }
+
+      // .js file or folder of some sort
+
+      const roots = Object.keys(tree)
+      const filter = await Promise.all(roots.map(isRootValidMod))
+      mod_folders = roots.filter((_, i) => filter[i])
+    } catch (e) {
+      // No mod folder at all. That's okay.
+      logger.error(e)
+      return []
+    }
   }
 
   const choice_promises = mod_folders.map(async (dir) => {
     try {
       const js = await getModJsAsync(dir, {liteload: true, reload: true})
-      if (js === null || js.hidden === true || js._internal)
+      if (js === null || js.hidden === true)
         return false
 
       return jsToChoice(js, dir)
@@ -1258,24 +1408,14 @@ async function loadModChoicesAsync(){
   return items
 }
 
-async function getModChoicesAsync() {
-  if (modChoices !== undefined) {
-    return modChoices
-  } else {
-    modChoices = await loadModChoicesAsync()
-    return modChoices
-  }
-}
-
 export default {
   store_mods, // store object
   getModStoreKey, // sync, pure, used by subsettingsmodal
   modsDir, // var, referenced by settings
 
   extractimods, // async, internal
+  removeModsFromEnabledList,
 
-  modChoices, // var
-  getModChoicesAsync, // async, main mixin $modChoices
   loadModChoicesAsync, // async, called by settings to refresh (promise-resolved)
 
   getEnabledModsJsAsync, // async, internal
@@ -1289,6 +1429,7 @@ export default {
   getAssetRoute, // sync, used by resources, unpure (depends on routes)
 
   editArchiveAsync, // async, awaited in app.vue after loading archive
+  loadAllContent() { Object.values(vm.$archive.mspa.story).forEach(page => page.content) },
 
   crawlFileTree, // internal/debug
   doFullRouteCheck, // internal/debug

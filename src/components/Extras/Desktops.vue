@@ -66,9 +66,8 @@
 
 <script>
 // @ is an alias to /src
-import GenericPage from '@/components/UIElements/GenericPage.vue'
+import GenericPage from '@/components/Template/GenericPage.vue'
 import MediaEmbed from '@/components/UIElements/MediaEmbed.vue'
-
 
 export default {
   name: 'desktops',
@@ -80,7 +79,7 @@ export default {
   },
   title(ctx) {
     return "Desktops"
-  },
+  }
 }
 </script>
 
@@ -91,4 +90,3 @@ export default {
     font-size: 18px;
   }
 </style>
-

@@ -3,6 +3,7 @@ import Vue from 'vue'
 import App from './App'
 import router from './router'
 import localData from './store/localData'
+import errorReporting from './js/errorReporting'
 
 import Memoization from '@/memoization.js'
 
@@ -12,8 +13,8 @@ import Resources from "./resources.js"
 import { library } from '@fortawesome/fontawesome-svg-core'
 import {
   faExternalLinkAlt, faChevronUp, faChevronRight, faChevronDown, faChevronLeft,
-  faSearch, faEdit, faSave, faTrash, faTimes, faPlus, faPen, faMusic, faLock,
-  faRedo, faStar, faRandom, faMousePointer, faBookmark, faTerminal, faMapPin
+  faSearch, faEdit, faSave, faTrash, faTimes, faPlus, faPen, faMusic, faLock, faUnlock,
+  faRedo, faStar, faRandom, faMousePointer, faBookmark, faTerminal, faMapPin, faFolderOpen
 } from '@fortawesome/free-solid-svg-icons'
 
 const importAsyncComputed = import('vue-async-computed')
@@ -21,26 +22,25 @@ const importFontAwesomeIconObj = import('@fortawesome/vue-fontawesome')
 
 library.add([
   faExternalLinkAlt, faChevronUp, faChevronRight, faChevronDown, faChevronLeft, 
-  faSearch, faEdit, faSave, faTrash, faTimes, faPlus, faPen, faMusic, faLock, 
-  faRedo, faStar, faRandom, faMousePointer, faBookmark, faTerminal, faMapPin
+  faSearch, faEdit, faSave, faTrash, faTimes, faPlus, faPen, faMusic, faLock, faUnlock,
+  faRedo, faStar, faRandom, faMousePointer, faBookmark, faTerminal, faMapPin, faFolderOpen
 ])
 
 // Global prereqs
 
 window.isWebApp = (window.isWebApp || false)
 
-const ipcRenderer = require('electron').ipcRenderer
+const ipcRenderer = require('IpcRenderer')
 
 // Must init resources first.
-var shell, store, log, port, appVersion
+/* eslint-disable no-redeclare */
+var shell, log, port, appVersion
 if (!window.isWebApp) {
-  var {shell} = require('electron')
-
-  const Store = require('electron-store')
-  store = new Store()
+  var { shell } = require('electron')
 
   log = require('electron-log')
-  log.transports.console.format = '[{level}] {text}'
+  log.transports.console.format = '{scope} {text}'
+  errorReporting.registerRenderLogger(log)
 
   var {port, appVersion} = ipcRenderer.sendSync('STARTUP_GET_INFO')
 
@@ -71,6 +71,7 @@ var promises_loading = []
 
 Vue.config.productionTip = false
 
+window.appVersion = appVersion
 Vue.use(localData) // Initializes and loads when Vue installs it
 
 // FontAwesomeIconComponent
@@ -87,8 +88,13 @@ promises_loading.push((async function() {
 
 // Mixin mod mixins
 promises_loading.push((async function() {
-  const mixins = await Mods.getMixinsAsync()
-  mixins.forEach((m) => Vue.mixin(m))
+  try {
+    const mixins = await Mods.getMixinsAsync()
+    mixins.forEach((m) => Vue.mixin(m))
+  } catch (e) {
+    // Catch error but still allow the vm to init without mods
+    log.scope('main.js init').error(e)
+  }
 })())
 
 Vue.mixin(Memoization.mixin)
@@ -103,7 +109,8 @@ Vue.mixin({
   computed: {
     $archive() {return this.$root.archive},
     $isNewReader() {
-      return Boolean(this.$newReaderCurrent && this.$localData.settings.newReader.limit)
+      if (this.$root.guestMode) return false
+      return (this.$newReaderCurrent && this.$localData.settings.newReader.limit)
     },
     $newReaderCurrent() {
       return this.$localData.settings.newReader.current
@@ -137,7 +144,7 @@ Vue.mixin({
       return resolvedUrl
     },
     $openModal(to) {
-      this.$root.$children[0].$refs[this.$localData.tabData.activeTabKey][0].$refs.modal.open(to)
+      this.$root.$children[0].$refs[this.$localData.tabData.activeTabKey][0].openModal(to)
     },
     $openLink(url, auxClick = false) {
       // Open a link. Could be intra-app, external, or an assets:// uri
@@ -161,7 +168,7 @@ Vue.mixin({
       // If asset, open in modal or externally as appropriate
       if (urlObject.protocol == "assets:") {
         const to_ = Resources.resolveAssetsProtocol(url)
-        if (!/\.(html|pdf)$/i.test(url)) {
+        if (!/\.(html|pdf|epub)$/i.test(url)) {
           this.$openModal(to_)
         } else {
           _openExternal(to_)
@@ -207,6 +214,9 @@ Vue.mixin({
       this.$localData.root.TABS_PUSH_URL(url, key)
     },
     $mspaFileStream(url) {
+      if (url.startsWith('data:')) {
+        return url
+      }
       return Resources.toFilePath(Resources.resolveURL(url), this.$localData.assetDir)
     },
     $getStoryNum: Resources.getStoryNum,
@@ -271,6 +281,7 @@ Vue.mixin({
         let nextLimit
 
         // Some pages don't directly link to the next page. These are manual exceptions to catch them up to speed
+        /* eslint-disable brace-style */
         if (!isSetupMode) {
           // Calculate nextLimit
           var offByOnePages = this.$archive.tweaks.offByOnePages
@@ -395,6 +406,7 @@ Vue.mixin({
       // "Hiveswap Friendsim" and "Pesterquest" are pseudopages used by the bandcamp viewer
       // to reference tracks and volumes, i.e. "Pesterquest: Volume 14"
 
+      if (this.$root.guestMode) return false
       if (!this.$archive) return true // Setup mode
 
       const parsedLimit = parseInt(this.$localData.settings.newReader[useLimit ? 'limit' : 'current'])
@@ -449,7 +461,7 @@ Vue.mixin({
   } 
 })
 
-window.Vue = Vue;
+window.Vue = Vue
 
 // Resolve all promises, then make app
 Promise.all(promises_loading).then(_ => {
@@ -463,20 +475,25 @@ Promise.all(promises_loading).then(_ => {
       return {
         archive: undefined,
         loadState: undefined,
+        loadError: undefined,
+        loadErrorResponsibleMods: undefined,
         loadStage: undefined,
+        guestMode: false,
         platform: (window.isWebApp ? "webapp" : "electron"),
         tabTheme: {} // Modified by App (avoid reacting to refs)
       }
     },
     computed: {
       // Easy access
-      app(){ return this.$refs.App },
+      app(){ return this.$refs.App }
     },
     asyncComputed: {
-      $modChoices: {
+      modChoices: {
         default: {},
-        get: Mods.getModChoicesAsync
-      },
+        async get() {
+          return (await Mods.loadModChoicesAsync())
+        }
+      }
     },
     router,
     render: function (h) { return h(App, {ref: 'App'}) },

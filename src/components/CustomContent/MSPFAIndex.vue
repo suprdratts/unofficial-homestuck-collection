@@ -16,7 +16,7 @@
 
 <script>
 import MediaEmbed from '@/components/UIElements/MediaEmbed.vue'
-import GenericPage from '@/components/UIElements/GenericPage.vue'
+import GenericPage from '@/components/Template/GenericPage.vue'
 
 const DateTime = require('luxon').DateTime
 
@@ -40,7 +40,7 @@ export default {
           label: story.n,
           startDate: DateTime.fromMillis(story.d).setZone("America/New_York"),
           updatedDate: DateTime.fromMillis(story.u).setZone("America/New_York"),
-          status: ['Inactive', 'Ongoing', 'Complete'][story.h-1],
+          status: ['Inactive', 'Ongoing', 'Complete'][story.h - 1],
           pageCount: story.p.length
         }
       })
@@ -109,4 +109,3 @@ export default {
     }
   }
 </style>
-

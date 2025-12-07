@@ -28,6 +28,7 @@
             <span v-if="modopt.summary" v-text="modopt.summary"/>
             <br />
             <span v-if="modopt.author" v-html="'by <b>' + modopt.author + '</b>'" />
+            <span class="error" v-if="modopt.compatible == false" v-html="'requires app <b>' + modopt.minAppVersion + '</b>'" />
             <span v-if="modopt.modVersion" v-html="'v<b>' + modopt.modVersion + '</b>'" />
             <span v-if="modopt.locked">unlocked at page
               <StoryPageLink :mspaId='modopt.locked'></StoryPageLink>
@@ -96,10 +97,14 @@ import StoryPageLink from '@/components/UIElements/StoryPageLink.vue'
 
 const { getModStoreKey, store_mods } = require('@/mods.js').default
 
-const { ipcRenderer } = require('electron')
+var store;
+if (!window.isWebApp) {
+  const Store = require('electron-store')
+  store = new Store()
+}
 
-const Store = require('electron-store')
-const store = new Store()
+const ipcRenderer = require('IpcRenderer')
+
 
 export default {
   name: 'modal',
@@ -301,6 +306,9 @@ export default {
     font-weight: normal;
 
     display: block;
+    &.error {
+      color: red;
+    }
   }
 
   .includes {

@@ -14,6 +14,8 @@ if (!isWebApp) {
 var archive
 var chapterIndex;
 
+const yieldToEventLoop = () => new Promise(resolve => setTimeout(resolve, 0));
+
 function giveArchive(care) {
   archive = care
 }
@@ -61,7 +63,9 @@ function buildChapterIndex(archive){
   chapterIndex.add(footnoteList)
 }
 
-function doSearch(payload) {
+async function doSearch(payload) {
+  await yieldToEventLoop()
+
   if (chapterIndex == undefined)
       buildChapterIndex(archive || window.vm.archive)
 
@@ -105,7 +109,11 @@ function doSearch(payload) {
   }
 
   // "Where" function to make sure any IN: tag matches the *start* of the chapter
-  const where = payload.chapter ? (item => item.chapter.toUpperCase().indexOf(payload.chapter) == 0) : undefined
+  const where = payload.chapter
+    ? (item => item.chapter.toUpperCase().indexOf(payload.chapter) == 0)
+    : undefined
+
+  await yieldToEventLoop()
 
   // Run search
   const searchOpts = {
@@ -127,8 +135,17 @@ function doSearch(payload) {
 
     // Split page by breaks, and also split apart very long paragraphs by sentences.
     const page_lines = page.content.split('<br />').map(line => {
-      if (line.length > 160) {
-        return line.split(/(?<=\. )/) // non-consuming split
+      // Detect very long paragraphs, but avoid splitting lines with long or complex attributes.
+      const temp_node = document.createElement('div')
+      temp_node.innerHTML = line
+      const line_text = temp_node.innerText
+
+      if (line_text.length > 160) {
+        return line_text.split(/(?<=\. )/).map(substr => { // non-consuming split
+          const span = (temp_node.children[0] || temp_node).cloneNode()
+          span.innerText = substr
+          return span.outerHTML
+        })
       } else {
         return [line]
       }
@@ -175,6 +192,7 @@ function doSearch(payload) {
         lines: [] // page_lines
       })
     }
+    await yieldToEventLoop()
   }
   return foundText
 }

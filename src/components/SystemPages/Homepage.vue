@@ -27,7 +27,7 @@
         </div>
         <div class="description">
           <p><em>A story about some kids who are friends over the internet. They decide to play a game together. There are major consequences.</em></p><br>
-          <p>The fourth, final, and most famous of the MS Paint Adventures. While it began as a "mock-game" following reader commands like the previous adventures, they were phased out as the story unfolded into a mixed-media barrage of mid-2000's internet culture satire, interpersonal drama, and Weird Plot Shit [sic].</p></br>
+          <p>The fourth, final, and most famous of the MS Paint Adventures. While it began as a "mock-game" following reader commands like the previous adventures, they were phased out as the story unfolded into a mixed-media barrage of mid-2000's internet culture satire, interpersonal drama, and Weird Plot Shit [sic].</p><br />
           <p>One-upping Problem Sleuth's action-packed GIFs, Homestuck spiced up pivotal moments with Flash animations scored by a lively team of composers. Over time, the music team produced dozens of albums across a variety of genres.</p>
           <div class="links">
             <div class="left bigLink">
@@ -286,6 +286,16 @@
           <template v-slot:title>The Man-On-Man Suckoff Challenge</template>
           <p>Gaze deep into the uncanny valley.</p>
         </HomeRowItem>
+
+        <HomeRowItem
+          class="rowItem"
+          href="/wizardyherbert/"
+          thumbsrc="/archive/collection/archive_wh.png"
+          date="Jul 2008">
+          <template v-slot:title>Wizardy Herbert</template>
+          <p>An unfinished book draft of a book about wizards and fanciful magicks. Last revised July 2008, discovered December 2012.</p>
+        </HomeRowItem>
+
       </div>
     </div>
 
@@ -312,7 +322,7 @@
           class="rowItem"
           href="/blogspot"
           thumbsrc="/archive/collection/archive_blogspot.png"
-          afterpage="002821"
+          afterpage="002816"
           date="Dec 2008 - Jul 2010">
           <template v-slot:title>Blogspot</template>
           <p>Used by Andrew Hussie for behind the scenes commentary during the early days of Homestuck.</p>
@@ -364,7 +374,7 @@
           thumbsrc="/archive/collection/archive_vigilprince.png"
           date="Jun 2009">
           <template v-slot:title>The Vigil Prince</template>
-          <p>Laugh, and the world laughs with you;<p>
+          <p>Laugh, and the world laughs with you;</p>
           <p>Weep, and you weep alone.</p>
           <p><em>-Wilford Brimley</em></p>
         </HomeRowItem>
@@ -429,7 +439,6 @@ export default {
 }
 </script>
 
-
 <style scoped lang="scss">
   @mixin tablet-size {
     @media (max-width: 950px) {
@@ -478,7 +487,8 @@ export default {
     align-content: center;
 
     ::v-deep a:not([disabled]) {
-      color: var(--page-links);
+      &:link { color: var(--page-links); }
+      &:link:active { color: var(--page-links-active); }
     }
 
     .a6a6graffiti {
@@ -618,6 +628,7 @@ export default {
       }
     }
   }
+  // TODO: Don't hide border on 2nd in tablet view (see TBIY)
   .card.noHeaderCard .cardContent.cardRows .rowItem  {
     &:nth-child(1), &:nth-child(2) {
       border-top: none;
